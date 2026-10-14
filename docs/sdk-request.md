@@ -27,6 +27,6 @@ I intend to publish my implementation under MIT. Please clarify what SDK
 interfaces, headers or examples may be redistributed and whether contributors
 can obtain the SDK to build the native adapter themselves.
 
-The repository is currently local; I can share its URL once published.
+Repository: https://github.com/Blackajiro/Hueforge-Bambu-Bridge
 
 Thanks!
