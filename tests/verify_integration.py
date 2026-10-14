@@ -25,6 +25,11 @@ def verify(hfp, stl):
         if result.returncode or not sliced.exists():
             raise RuntimeError('Slicing failed: ' + result.stdout[-4000:] + result.stderr[-4000:])
         with zipfile.ZipFile(sliced) as archive:
+            settings = json.loads(archive.read('Metadata/project_settings.config'))
+            for key, value in bridge.PROCESS_OVERRIDES.items():
+                assert settings[key] == value, (key, settings[key], value)
+            assert abs(float(settings['initial_layer_print_height'])-first) < 1e-5
+            assert settings['flush_multiplier'] == ['1']
             gcode = archive.read('Metadata/plate_1.gcode').decode('utf-8')
             info = ET.fromstring(archive.read('Metadata/slice_info.config'))
             used = info.findall('plate/filament')

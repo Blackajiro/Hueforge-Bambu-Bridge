@@ -12,6 +12,35 @@ import zipfile
 
 APP = Path('/Applications/BambuStudio.app/Contents')
 
+# Project geometry and optical blending require uniform, solid layers.
+PROCESS_OVERRIDES = {
+    'sparse_infill_density': '100%', 'sparse_infill_pattern': 'zig-zag',
+    'enable_support': '0', 'enable_prime_tower': '1',
+    'flush_into_infill': '0', 'flush_into_objects': '0',
+    'ironing_type': 'no ironing', 'top_surface_pattern': 'monotonicline',
+    'infill_combination': '0', 'precise_z_height': '0',
+    'print_sequence': 'by layer', 'spiral_mode': '0',
+}
+
+
+def apply_project_settings(settings, stack, first, height):
+    settings.update(PROCESS_OVERRIDES)
+    settings.update(layer_height=str(height), initial_layer_print_height=str(first),
+                    curr_bed_type='Textured PEI Plate')
+    count = len(stack)
+    settings['filament_colour'] = [item['filamentDef']['Color'] for item in stack]
+    # shortcut: fixed conservative purge, replace with calibrated pair volumes when supported.
+    settings['flush_volumes_matrix'] = ['0' if i == j else '650'
+                                       for i in range(count) for j in range(count)]
+    settings['flush_volumes_vector'] = ['140'] * (2 * count)
+    settings['flush_multiplier'] = ['1']
+    # Studio's GUI restores system values unless modified preset keys are declared.
+    settings['different_settings_to_system'] = [
+        ';'.join(sorted(set(PROCESS_OVERRIDES) | {'layer_height', 'initial_layer_print_height'})),
+        *(['filament_colour'] * count), '',
+    ]
+
+
 
 def resolve_profile(folder, name, trail=()):
     if name in trail:
@@ -106,10 +135,8 @@ def convert(hfp, stl, output):
     profiles = APP / 'Resources/profiles/BBL'
     machine = resolve_profile(profiles / 'machine', 'Bambu Lab P2S 0.4 nozzle')
     process = resolve_profile(profiles / 'process', '0.08mm High Quality @BBL P2S')
+    process.update(PROCESS_OVERRIDES)
     process.update(layer_height=str(height), initial_layer_print_height=str(first),
-                   sparse_infill_density='100%', sparse_infill_pattern='zig-zag',
-                   enable_support='0', enable_prime_tower='1',
-                   flush_into_infill='0', flush_into_objects='0',
                    curr_bed_type='Textured PEI Plate')
     with tempfile.TemporaryDirectory(prefix='hueforge-bambu-') as tmp:
         tmp = Path(tmp)
@@ -141,12 +168,7 @@ def convert(hfp, stl, output):
                     len(settings['filament_settings_id']) != len(stack) or
                     abs(float(settings['layer_height'])-height) > 1e-5):
                 raise RuntimeError('Bambu did not apply resolved profiles correctly')
-            settings['filament_colour'] = [i['filamentDef']['Color'] for i in stack]
-            # shortcut: conservative fixed purge, tune in Studio after a physical color test.
-            count = len(stack)
-            settings['flush_volumes_matrix'] = ['0' if i == j else '650'
-                                               for i in range(count) for j in range(count)]
-            settings['flush_volumes_vector'] = ['140'] * (2 * count)
+            apply_project_settings(settings, stack, first, height)
             with zipfile.ZipFile(tmp / 'final.3mf', 'w', zipfile.ZIP_DEFLATED) as target:
                 for entry in original.infolist():
                     if entry.filename == 'Metadata/project_settings.config':

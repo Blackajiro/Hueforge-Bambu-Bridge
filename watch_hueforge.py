@@ -22,7 +22,7 @@ def find_stl(hfp):
     matches = [p for p in hfp.parent.iterdir()
                if p.name.startswith(hfp.stem + '_Front_') and p.suffix.lower() == '.stl']
     if len(matches) > 1:
-        raise ValueError('Più STL Front per questo progetto. Salva in una cartella dedicata.')
+        raise ValueError('Multiple Front STL exports found. Keep one matching STL in the project folder.')
     return matches[0] if matches else None
 
 
@@ -50,10 +50,10 @@ def emit(kind, message, path=None):
 def watch(hfp):
     hfp = hfp.resolve(strict=True)
     if hfp.suffix.lower() != '.hfp':
-        raise ValueError('Seleziona un progetto .hfp')
+        raise ValueError('Choose a HueForge .hfp project.')
     stl = find_stl(hfp)
     tracker = SaveTracker((signature(hfp), signature(stl)))
-    emit('waiting', 'Collegato. Salva il progetto in HueForge per esportare.')
+    emit('connected', 'Save the project in HueForge and confirm its save dialog. The next completed save will export automatically.')
     previous_message = None
     failed_pair = None
     while True:
@@ -62,7 +62,7 @@ def watch(hfp):
             stl = find_stl(hfp)
             pair = (signature(hfp), signature(stl))
             if tracker.ready(pair, time.monotonic()) and pair != failed_pair:
-                emit('converting', 'Salvataggio rilevato. Creo il progetto per Bambu Studio…')
+                emit('converting', 'Creating a Bambu Studio project from your saved files…')
                 with tempfile.TemporaryDirectory(prefix='hueforge-snapshot-') as folder:
                     folder = Path(folder)
                     source, mesh, output = folder/hfp.name, folder/stl.name, folder/'result.3mf'
@@ -83,17 +83,17 @@ def watch(hfp):
                     with target.open('xb') as result:
                         result.write(output.read_bytes())
                 tracker.consume(pair)
-                emit('ready', '3MF pronto. Puoi continuare a lavorare in HueForge.', target)
+                emit('ready', 'Export complete. Your next HueForge save will create a new version.', target)
                 previous_message = None
             elif pair != tracker.baseline and pair != failed_pair:
-                message = 'Attendo che HueForge completi il salvataggio di HFP e STL…'
+                message = 'Waiting for HueForge to finish saving both the project and its STL…'
                 if message != previous_message:
                     emit('waiting', message)
                     previous_message = message
         except Exception as error:
             message = str(error)
             if message != previous_message:
-                emit('error', message + ' Correggi e salva di nuovo in HueForge.')
+                emit('error', message + ' Fix the issue and save again in HueForge.')
                 previous_message = message
             # Do not continuously repeat a failed conversion of the same saved pair.
             failed_pair = pair

@@ -3,12 +3,16 @@ import UniformTypeIdentifiers
 
 final class BridgeApp: NSObject, NSApplicationDelegate {
     var window: NSWindow!
-    let projectLabel = NSTextField(labelWithString: "Nessun progetto collegato")
-    let status = NSTextField(wrappingLabelWithString: "Scegli un progetto. Poi salva in HueForge: il 3MF viene preparato automaticamente.")
-    let choose = NSButton(title: "Scegli progetto HueForge…", target: nil, action: nil)
-    let stop = NSButton(title: "Scollega", target: nil, action: nil)
-    let open = NSButton(title: "Apri ultimo 3MF", target: nil, action: nil)
-    let autoOpen = NSButton(checkboxWithTitle: "Apri in Bambu Studio dopo ogni esportazione", target: nil, action: nil)
+    let projectLabel = NSTextField(labelWithString: "No project selected")
+    let location = NSTextField(labelWithString: "Choose a saved HueForge project to get started.")
+    let phase = NSTextField(labelWithString: "Connect your project")
+    let status = NSTextField(wrappingLabelWithString: "Keep this app open while you work. Each new HueForge save becomes a Bambu Studio project.")
+    let choose = NSButton(title: "Choose Project…", target: nil, action: nil)
+    let stop = NSButton(title: "Disconnect", target: nil, action: nil)
+    let open = NSButton(title: "Open in Bambu Studio", target: nil, action: nil)
+    let reveal = NSButton(title: "Show in Finder", target: nil, action: nil)
+    let autoOpen = NSButton(checkboxWithTitle: "Open Bambu Studio after export", target: nil, action: nil)
+    let progress = NSProgressIndicator()
     var worker: Process?
     var latest: URL?
     var generation = UUID()
@@ -19,89 +23,144 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         let appMenu = NSMenuItem()
         menu.addItem(appMenu)
         appMenu.submenu = NSMenu()
-        appMenu.submenu?.addItem(withTitle: "Esci da HueForge Bambu Bridge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        let edit = NSMenuItem(title: "Modifica", action: nil, keyEquivalent: "")
+        appMenu.submenu?.addItem(withTitle: "Quit HueForge Bambu Bridge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let fileMenu = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        fileMenu.submenu = NSMenu(title: "File")
+        let chooseItem = NSMenuItem(title: "Choose Project…", action: #selector(selectProject), keyEquivalent: "o")
+        chooseItem.target = self
+        fileMenu.submenu?.addItem(chooseItem); menu.addItem(fileMenu)
+        let edit = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         menu.addItem(edit)
-        edit.submenu = NSMenu(title: "Modifica")
-        edit.submenu?.addItem(withTitle: "Copia", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.submenu = NSMenu(title: "Edit")
+        edit.submenu?.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         NSApp.mainMenu = menu
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 530, height: 360),
-                          styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 440),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.minSize = NSSize(width: 520, height: 460)
         window.title = "HueForge Bambu Bridge"
         window.center()
-        let heading = NSTextField(labelWithString: "Da HueForge a Bambu Studio")
-        heading.font = .systemFont(ofSize: 21, weight: .semibold)
-        let detail = NSTextField(labelWithString: "P2S · ugello 0,4 mm · AMS")
+        let heading = NSTextField(wrappingLabelWithString: "Save in HueForge. Slice in Bambu.")
+        heading.font = .systemFont(ofSize: 22, weight: .semibold)
+        let detail = NSTextField(labelWithString: "P2S · 0.4 mm nozzle · AMS · Textured PEI")
         detail.textColor = .secondaryLabelColor
-        projectLabel.lineBreakMode = .byTruncatingMiddle
-        projectLabel.isSelectable = true
+        detail.lineBreakMode = .byTruncatingTail
+        let icon = NSImageView(image: NSImage(named: NSImage.applicationIconName) ?? NSImage())
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        let titleStack = NSStackView(views: [heading, detail])
+        titleStack.orientation = .vertical; titleStack.alignment = .leading; titleStack.spacing = 6
+        let header = NSStackView(views: [icon, titleStack]); header.spacing = 12
+        projectLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        projectLabel.lineBreakMode = .byTruncatingMiddle; projectLabel.isSelectable = true
+        location.font = .systemFont(ofSize: 12)
+        location.textColor = .secondaryLabelColor
+        location.lineBreakMode = .byTruncatingMiddle; location.isSelectable = true
+        phase.font = .systemFont(ofSize: 15, weight: .semibold)
         status.maximumNumberOfLines = 3
-        status.lineBreakMode = .byTruncatingTail
-        status.textColor = .secondaryLabelColor
+        status.lineBreakMode = .byWordWrapping
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        status.setAccessibilityRole(.staticText)
+        progress.style = .spinning; progress.controlSize = .small
+        progress.isDisplayedWhenStopped = false
+        let phaseRow = NSStackView(views: [phase, progress]); phaseRow.spacing = 8
         choose.target = self; choose.action = #selector(selectProject)
-        choose.bezelStyle = .rounded
-        stop.target = self; stop.action = #selector(disconnect)
-        stop.bezelStyle = .rounded; stop.isEnabled = false
-        open.target = self; open.action = #selector(openLatest)
-        open.bezelStyle = .rounded; open.isEnabled = false
-        autoOpen.state = .on
-        let buttons = NSStackView(views: [choose, stop])
-        buttons.spacing = 8
-        let stack = NSStackView(views: [heading, detail, projectLabel, buttons, status, autoOpen, open])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 14
+        stop.target = self; stop.action = #selector(disconnect); stop.isHidden = true
+        open.target = self; open.action = #selector(openLatest); open.isEnabled = false
+        reveal.target = self; reveal.action = #selector(revealLatest); reveal.isEnabled = false
+        for button in [choose, stop, open, reveal] { button.bezelStyle = .rounded }
+        choose.keyEquivalent = "\r"
+        autoOpen.state = UserDefaults.standard.object(forKey: "autoOpen") == nil || UserDefaults.standard.bool(forKey: "autoOpen") ? .on : .off
+        autoOpen.target = self; autoOpen.action = #selector(savePreference)
+        let selection = NSStackView(views: [choose, stop]); selection.spacing = 8
+        let output = NSStackView(views: [open, reveal]); output.spacing = 8
+        let hint = NSTextField(wrappingLabelWithString: "Before printing, check the build plate and map project colors to your AMS spools in Bambu Studio.")
+        hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor
+        let stack = NSStackView(views: [header, separator(), projectLabel, location, selection,
+                                       separator(), phaseRow, status, autoOpen, output, hint])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
-        NSLayoutConstraint.activate([
+        var constraints = [
+            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            heading.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -60),
+            detail.widthAnchor.constraint(equalTo: heading.widthAnchor),
             stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 24),
-            status.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            projectLabel.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        ])
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor, constant: -24)
+        ]
+        for view in [projectLabel, location, status, hint] {
+            constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor))
+        }
+        for view in stack.arrangedSubviews where view is NSBox {
+            constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor))
+        }
+        NSLayoutConstraint.activate(constraints)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    func separator() -> NSBox { let box = NSBox(); box.boxType = .separator; return box }
+
+    func updateStatus(_ title: String, _ message: String, busy: Bool = false, error: Bool = false) {
+        phase.stringValue = title
+        phase.textColor = error ? .systemRed : .labelColor
+        status.stringValue = message; status.toolTip = message
+        if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
+        NSAccessibility.post(element: status, notification: .valueChanged)
+    }
+
+    @objc func savePreference() { UserDefaults.standard.set(autoOpen.state == .on, forKey: "autoOpen") }
 
     @objc func selectProject() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "hfp") ?? .data]
         panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
-        panel.prompt = "Collega progetto"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        panel.prompt = "Connect Project"
+        panel.message = "Select the saved .hfp file. Keep its matching Front STL in the same folder."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.connect(url)
+        }
+    }
+
+    func connect(_ url: URL) {
         disconnect()
-        latest = nil; open.isEnabled = false
+        latest = nil; open.isEnabled = false; reveal.isEnabled = false
         projectLabel.stringValue = url.lastPathComponent
-        projectLabel.toolTip = url.path
+        location.stringValue = url.deletingLastPathComponent().path
+        location.toolTip = url.path
         guard let resources = Bundle.main.resourceURL,
               let python = Bundle.main.object(forInfoDictionaryKey: "BridgePython") as? String,
               FileManager.default.isExecutableFile(atPath: python) else {
-            status.stringValue = "Python 3 non trovato. Ricostruisci l’app con python3 macos/build.py."
+            updateStatus("Python not found", "Rebuild this app with python3 macos/build.py on this Mac.", error: true)
+            return
+        }
+        guard FileManager.default.fileExists(atPath: "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio") else {
+            updateStatus("Bambu Studio not found", "Install Bambu Studio in /Applications, then choose the project again.", error: true)
             return
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: python)
         task.arguments = [resources.appendingPathComponent("watch_hueforge.py").path, url.path]
         task.currentDirectoryURL = resources
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        let token = UUID(); generation = token
-        worker = task
+        let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
+        let token = UUID(); generation = token; worker = task
         task.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self = self, self.generation == token else { return }
-                self.stop.isEnabled = false
-                self.worker = nil
-                if !self.status.stringValue.hasPrefix("Errore:") {
-                    self.status.stringValue = "Bridge arrestato. Scegli il progetto per ripartire."
+                self.stop.isHidden = true; self.worker = nil
+                self.progress.stopAnimation(nil)
+                if self.phase.textColor != .systemRed {
+                    self.updateStatus("Disconnected", "Choose the project again to resume automatic exports.")
                 }
             }
         }
         do {
             try task.run()
-            stop.isEnabled = true
-            status.stringValue = "Collegamento al progetto…"
+            stop.isHidden = false; choose.title = "Change Project…"
+            updateStatus("Connecting…", "Reading your saved project and looking for its Front STL.", busy: true)
             DispatchQueue.global(qos: .utility).async { [weak self] in
                 var pending = Data()
                 while true {
@@ -109,8 +168,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
                     if data.isEmpty { break }
                     pending.append(data)
                     while let end = pending.firstIndex(of: 10) {
-                        let line = pending.prefix(upTo: end)
-                        pending.removeSubrange(...end)
+                        let line = pending.prefix(upTo: end); pending.removeSubrange(...end)
                         guard let event = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
                         DispatchQueue.main.async {
                             guard let self = self, self.generation == token else { return }
@@ -119,36 +177,46 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
                     }
                 }
             }
-        } catch {
-            worker = nil
-            status.stringValue = "Errore: \(error.localizedDescription)"
-        }
+        } catch { worker = nil; updateStatus("Could not connect", error.localizedDescription, error: true) }
     }
 
     func receive(_ event: [String: Any]) {
         let kind = event["event"] as? String ?? ""
-        status.stringValue = (kind == "error" ? "Errore: " : "") + (event["message"] as? String ?? "")
-        status.toolTip = status.stringValue
-        if kind == "ready", let path = event["path"] as? String {
+        let message = event["message"] as? String ?? ""
+        switch kind {
+        case "connected": updateStatus("Waiting for your next save", message)
+        case "waiting": updateStatus("Save in progress", message, busy: true)
+        case "converting": updateStatus("Exporting 3MF…", message, busy: true)
+        case "error": updateStatus("Export needs attention", message, error: true)
+        case "ready":
+            guard let path = event["path"] as? String else { return }
             latest = URL(fileURLWithPath: path)
-            open.isEnabled = true
+            open.isEnabled = true; reveal.isEnabled = true
+            updateStatus("3MF exported", message)
             if autoOpen.state == .on { openLatest() }
+        default: break
         }
     }
 
     @objc func disconnect() {
-        generation = UUID()
-        worker?.terminate(); worker = nil
-        stop.isEnabled = false
-        status.stringValue = "Scollegato. Puoi scegliere un progetto HueForge."
+        generation = UUID(); worker?.terminate(); worker = nil
+        stop.isHidden = true; choose.title = "Choose Project…"
+        updateStatus("Disconnected", "Choose a project to resume. Your existing exports are kept.")
+    }
+
+    @objc func revealLatest() {
+        if let file = latest { NSWorkspace.shared.activateFileViewerSelecting([file]) }
     }
 
     @objc func openLatest() {
         guard let file = latest else { return }
-        let app = URL(fileURLWithPath: "/Applications/BambuStudio.app")
-        NSWorkspace.shared.open([file], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-            if let error = error {
-                DispatchQueue.main.async { self?.status.stringValue = "3MF creato, apertura non riuscita: \(error.localizedDescription)" }
+        let token = generation
+        NSWorkspace.shared.open([file], withApplicationAt: URL(fileURLWithPath: "/Applications/BambuStudio.app"), configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self = self, self.generation == token else { return }
+                if let error = error {
+                    self.updateStatus("3MF saved; could not open Studio", error.localizedDescription + " Use Show in Finder to open the file manually.", error: true)
+                }
             }
         }
     }

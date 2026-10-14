@@ -68,6 +68,22 @@ class ConverterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 h.validate_stl(path, self.project, self.stack, .16, .08)
 
+    def test_studio_preserves_overrides_and_filament_colors(self):
+        settings = {'layer_height': '.2', 'ironing_type': 'all solid surfaces',
+                    'flush_multiplier': ['.3']}
+        h.apply_project_settings(settings, self.stack, .16, .08)
+        self.assertEqual(settings['initial_layer_print_height'], '0.16')
+        self.assertEqual(settings['infill_combination'], '0')
+        self.assertEqual(settings['ironing_type'], 'no ironing')
+        self.assertEqual(settings['sparse_infill_density'], '100%')
+        self.assertEqual(settings['flush_multiplier'], ['1'])
+        changes = settings['different_settings_to_system']
+        self.assertEqual(len(changes), len(self.stack)+2)
+        self.assertIn('initial_layer_print_height', changes[0].split(';'))
+        self.assertTrue(set(h.PROCESS_OVERRIDES).issubset(changes[0].split(';')))
+        self.assertEqual(changes[1:5], ['filament_colour']*4)
+        self.assertEqual(len(settings['flush_volumes_matrix']), 16)
+
     def test_never_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'existing.3mf'

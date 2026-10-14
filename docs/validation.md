@@ -53,3 +53,19 @@ and material ranges despite the diagnostic.
 
 Vendor source was consulted to understand file formats. The repository uses
 its own implementation and does not bundle vendor source or application assets.
+
+## Version 0.3 settings and UI verification
+
+The app now uses English throughout, separates connection/save/export/error
+states, keeps complete error details in tooltips, and offers both
+Open in Bambu Studio and Show in Finder. Automatic opening is remembered.
+Selection uses a nonblocking native sheet; the window can resize.
+
+Ten unit tests pass, including explicit modified-preset key metadata. A new live
+HueForge save produced a 3MF with the documented overrides. The integration test
+checks every process override in the sliced project as well as the 18 layer Z
+positions and three AMS transitions. Updated project copies are regenerated;
+previous timestamped exports remain historical files and are not silently edited.
+
+See [print-settings.md](print-settings.md) for the research, sources and distinction
+between guaranteed export settings and material-dependent physical calibration.

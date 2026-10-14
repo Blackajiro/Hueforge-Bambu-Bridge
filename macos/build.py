@@ -23,7 +23,8 @@ with (app/'Info.plist').open('wb') as output:
                       CFBundleIdentifier='org.hueforge-bambu-bridge.desktop',
                       CFBundleExecutable='Bridge', CFBundlePackageType='APPL',
                       CFBundleIconFile='AppIcon',
-                      CFBundleShortVersionString='0.2.0', CFBundleVersion='2',
+                      CFBundleShortVersionString='0.3.0', CFBundleVersion='3',
                       LSMinimumSystemVersion='12.0', NSHighResolutionCapable=True,
+                      CFBundleDevelopmentRegion='en', CFBundleLocalizations=['en'],
                       BridgePython=sys.executable), output)
 print(app.parent)
