@@ -8,7 +8,7 @@ import signal
 import tempfile
 import time
 
-from hueforge_bambu import convert
+from hueforge_bambu import convert, read_template
 
 
 def signature(path):
@@ -47,7 +47,8 @@ def emit(kind, message, path=None):
     print(json.dumps(dict(event=kind, message=message, path=str(path) if path else None)), flush=True)
 
 
-def watch(hfp):
+def watch(hfp, template):
+    read_template(template)
     hfp = hfp.resolve(strict=True)
     if hfp.suffix.lower() != '.hfp':
         raise ValueError('Choose a HueForge .hfp project.')
@@ -74,7 +75,7 @@ def watch(hfp):
                     import contextlib
                     import sys
                     with contextlib.redirect_stdout(sys.stderr):
-                        convert(source, mesh, output)
+                        convert(source, mesh, output, template)
                     if pair != (signature(hfp), signature(find_stl(hfp))):
                         continue
                     destination = hfp.parent/'Bambu Bridge Exports'
@@ -103,12 +104,13 @@ def watch(hfp):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('hfp', type=Path)
+    parser.add_argument('--template', type=Path, required=True)
     args = parser.parse_args()
     def stop(signum, frame):
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, stop)
     try:
-        watch(args.hfp)
+        watch(args.hfp, args.template)
     except Exception as error:
         emit('error', str(error))
         raise SystemExit(1)

@@ -1,7 +1,6 @@
 # HueForge settings for Bambu Studio
 
-Reviewed 2026-10-14 for ordinary, front-facing filament paintings on a **P2S with
-0.4 mm nozzle and AMS**, using Bambu Studio 02.08.02.61. This is an evidence-based
+Reviewed 2026-10-14 for ordinary, front-facing filament paintings on a **imported single-nozzle Bambu printer templates with AMS**, using Bambu Studio 02.08.02.61. This is an evidence-based
 baseline, not a universal “best quality” profile or a physical calibration.
 
 ## Applied to every export
@@ -18,15 +17,16 @@ baseline, not a universal “best quality” profile or a physical calibration.
 | Supports | Off | Flat front-facing relief is printed base-down. |
 | Flush into infill / objects | Off | Purged colors must not enter translucent artwork. |
 | Prime tower | On | Stabilizes extrusion after filament changes; not a replacement for purging. |
-| Purge multiplier | 1 | Makes the configured purge volumes explicit. |
-| Purge matrix | 650 mm³ off-diagonal; 0 diagonal | Conservative prototype fallback, **not color-calibrated**. |
-| Build plate | Textured PEI | Matches the initial supported target. Select your actual plate before printing. |
+| Purge multiplier | Imported, or 1 on color mismatch | Preserves calibrated matching-color templates. |
+| Purge matrix | Imported for matching colors/order; otherwise 650 mm³ off-diagonal | Fallback is conservative, **not color-calibrated**. |
+| Build plate | Imported from template | Select the correct plate before saving your Studio template. |
 
-The bridge starts from installed **0.08mm High Quality @BBL P2S**, and matching
-Bambu PLA Matte/Basic filament profiles. It keeps their temperatures, cooling,
-volumetric limits, flow, speeds, line widths and shells. The installed profile has
-2 walls, 9 top layers and 7 bottom layers. These are inherited defaults, not a
-requirement to cover the entire relief with dozens of extra top layers.
+The bridge reads the full settings from a project 3MF saved in Bambu Studio.
+It preserves the selected printer/nozzle, plate, machine G-code, material profiles,
+temperatures, cooling, flow, speeds, line widths and shells. Configure exactly the
+same number of PLA filaments as HueForge uses, with Bambu Matte/Basic profiles in
+bottom-to-top order. Geometry and old color changes in the template are replaced;
+we do not merge its model with the HueForge artwork.
 
 Project-specific overrides are also declared in `different_settings_to_system`.
 This matters: the Studio GUI can otherwise restore the system preset instead of
@@ -42,15 +42,14 @@ anecdotes. Tune these on the actual spool and printer. Calibrating TD and flow
 matters more than copying another person's profile.
 
 For purge, use Studio's **Flushing volumes → Re-calculate** for your actual colors,
-then validate dark-to-light transitions with your spools. The fixed 650 mm³ value
-is deliberately disclosed and may waste material. A calibrated matrix imported
-from the user's own project would be a future improvement; this version does not
-claim to preserve one.
+then validate dark-to-light transitions with your spools. Your imported matrix is preserved when template colors match the HueForge stack.
+If colors differ, the disclosed 650 mm³ fallback may waste material; use Studio
+to recalculate and tune before printing.
 
-The converter's 0.08–0.28 mm validation range reflects supported nozzle layer
-heights, not a recommendation to paint at 0.28 mm. It preserves the HFP values;
-0.08/0.16 mm is the tested bookmark configuration. Never scale Z, enable adaptive
-layers or change first-layer height after export without rechecking all swaps.
+Layer heights are checked against the imported nozzle limits (or conservative
+nozzle-relative limits when absent), not a hardcoded P2S range. The tested bookmark
+uses 0.08/0.16 mm. A different nozzle can require retuning the project in HueForge.
+Never scale Z or enable adaptive layers after export without rechecking all swaps.
 
 ## Primary sources and how they were used
 
@@ -61,7 +60,7 @@ layers or change first-layer height after export without rechecking all swaps.
   not proof that these heights fit every project.
 - [Bambu Studio configuration definitions](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PrintConfig.cpp):
   prime tower pressure stabilization, purge multiplier, flush into model and
-  precise Z behavior. Installed P2S presets supply the actual machine/material values.
+  precise Z behavior. The imported template supplies the actual machine/material values.
 - [Bambu Studio preset import](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PresetBundle.cpp):
   process/filament/printer modified-key metadata used when opening external projects.
 - [Bambu Studio 3MF reader/writer](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/Format/bbs_3mf.cpp):

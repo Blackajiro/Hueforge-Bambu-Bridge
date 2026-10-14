@@ -69,3 +69,21 @@ previous timestamped exports remain historical files and are not silently edited
 
 See [print-settings.md](print-settings.md) for the research, sources and distinction
 between guaranteed export settings and material-dependent physical calibration.
+
+## Version 0.4 printer selection
+
+Printer/nozzle/plate/material settings now come from an explicitly imported Bambu
+Studio project 3MF. The UI validates it, shows a printer summary, saves a local copy
+and restores it on launch. The converter has no hardcoded P2S preset lookup.
+
+The same bookmark was converted and sliced using both P2S and A1 0.4 mm templates
+from the installed vendor presets. Both retain 18 layers and the three expected
+AMS changes. This is software validation, not a physical test of either printer.
+Multi-extruder templates are rejected; other models have not yet been tested.
+Twelve unit tests cover template validation, filament/nozzle compatibility,
+custom machine settings, plate, purge preservation and the existing workflow.
+Historical notes above describe earlier versions; current behavior is documented
+in the README and print-settings guide.
+
+The template was also imported in the running macOS UI and restored after a quit/relaunch.
+A real watcher subprocess exported a saved file pair with the selected A1 template.

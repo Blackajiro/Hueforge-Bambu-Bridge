@@ -13,12 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import hueforge_bambu as bridge
 
 
-def verify(hfp, stl):
+def verify(hfp, stl, template):
     stack, first, height = bridge.read_stack(json.loads(hfp.read_text()))
     with tempfile.TemporaryDirectory(prefix='hueforge-integration-') as folder:
         folder = Path(folder)
         project, sliced = folder/'project.3mf', folder/'sliced.3mf'
-        bridge.convert(hfp, stl, project)
+        bridge.convert(hfp, stl, project, template)
         result = subprocess.run([str(bridge.APP/'MacOS/BambuStudio'), '--slice', '0',
                                  '--export-3mf', str(sliced), str(project)],
                                 capture_output=True, text=True, cwd=folder)
@@ -29,7 +29,10 @@ def verify(hfp, stl):
             for key, value in bridge.PROCESS_OVERRIDES.items():
                 assert settings[key] == value, (key, settings[key], value)
             assert abs(float(settings['initial_layer_print_height'])-first) < 1e-5
-            assert settings['flush_multiplier'] == ['1']
+            template_settings = bridge.read_template(template)
+            for key in ['printer_settings_id', 'nozzle_diameter', 'curr_bed_type',
+                        'machine_start_gcode', 'machine_end_gcode', 'change_filament_gcode']:
+                assert settings[key] == template_settings[key], key
             gcode = archive.read('Metadata/plate_1.gcode').decode('utf-8')
             info = ET.fromstring(archive.read('Metadata/slice_info.config'))
             used = info.findall('plate/filament')
@@ -58,5 +61,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('hfp', type=Path)
     parser.add_argument('stl', type=Path)
+    parser.add_argument('--template', type=Path, required=True)
     args = parser.parse_args()
-    verify(args.hfp, args.stl)
+    verify(args.hfp, args.stl, args.template)

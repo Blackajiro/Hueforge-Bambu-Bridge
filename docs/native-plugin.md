@@ -25,12 +25,12 @@ installed HueForge 0.9.4.4 application or in the public resources checked on
 
 1. Open and tune a project in HueForge.
 2. Choose **Export to Bambu Studio** from a plugin-provided menu action.
-3. Confirm output path and review the P2S/0.4 mm/AMS target and color stack.
+3. Confirm output path and review the imported printer/nozzle target and color stack.
 4. Export a current mesh and matching project state through supported host APIs.
 5. Run the existing converter outside the host UI thread.
 6. Open the completed 3MF in Bambu Studio using the supported platform API.
 
-First release retains the converter's current printer/material limits. It does
+The native adapter would retain the converter's template/material limits. It does
 not send a print, synchronize physical AMS slots, or change the filament library.
 
 ## SDK questions to resolve before implementation

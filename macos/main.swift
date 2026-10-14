@@ -13,6 +13,10 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
     let reveal = NSButton(title: "Show in Finder", target: nil, action: nil)
     let autoOpen = NSButton(checkboxWithTitle: "Open Bambu Studio after export", target: nil, action: nil)
     let progress = NSProgressIndicator()
+    let profileLabel = NSTextField(wrappingLabelWithString: "No printer profile selected")
+    let profileButton = NSButton(title: "Choose Printer Profile…", target: nil, action: nil)
+    var templateURL: URL?
+    var projectURL: URL?
     var worker: Process?
     var latest: URL?
     var generation = UUID()
@@ -34,14 +38,14 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         edit.submenu = NSMenu(title: "Edit")
         edit.submenu?.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         NSApp.mainMenu = menu
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 440),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 540),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.minSize = NSSize(width: 520, height: 460)
+        window.minSize = NSSize(width: 560, height: 560)
         window.title = "HueForge Bambu Bridge"
         window.center()
         let heading = NSTextField(wrappingLabelWithString: "Save in HueForge. Slice in Bambu.")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
-        let detail = NSTextField(labelWithString: "P2S · 0.4 mm nozzle · AMS · Textured PEI")
+        let detail = NSTextField(labelWithString: "Your printer profile. Your HueForge colors.")
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
         let icon = NSImageView(image: NSImage(named: NSImage.applicationIconName) ?? NSImage())
@@ -64,6 +68,11 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         progress.style = .spinning; progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
         let phaseRow = NSStackView(views: [phase, progress]); phaseRow.spacing = 8
+        profileLabel.textColor = .secondaryLabelColor
+        profileLabel.maximumNumberOfLines = 3
+        profileButton.target = self; profileButton.action = #selector(selectTemplate)
+        profileButton.bezelStyle = .rounded
+        choose.isEnabled = false
         choose.target = self; choose.action = #selector(selectProject)
         stop.target = self; stop.action = #selector(disconnect); stop.isHidden = true
         open.target = self; open.action = #selector(openLatest); open.isEnabled = false
@@ -76,7 +85,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         let output = NSStackView(views: [open, reveal]); output.spacing = 8
         let hint = NSTextField(wrappingLabelWithString: "Before printing, check the build plate and map project colors to your AMS spools in Bambu Studio.")
         hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [header, separator(), projectLabel, location, selection,
+        let stack = NSStackView(views: [header, separator(), profileButton, profileLabel, separator(), projectLabel, location, selection,
                                        separator(), phaseRow, status, autoOpen, output, hint])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -90,7 +99,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 24),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor, constant: -24)
         ]
-        for view in [projectLabel, location, status, hint] {
+        for view in [profileLabel, projectLabel, location, status, hint] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor))
         }
         for view in stack.arrangedSubviews where view is NSBox {
@@ -99,6 +108,12 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         NSLayoutConstraint.activate(constraints)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if let saved = UserDefaults.standard.string(forKey: "printerTemplate"),
+           FileManager.default.fileExists(atPath: saved) {
+            loadTemplate(URL(fileURLWithPath: saved), importing: false)
+        } else {
+            updateStatus("Choose a printer profile first", "Save a project 3MF in Bambu Studio with your printer, nozzle, build plate and PLA filaments, then import it here.")
+        }
     }
 
     func separator() -> NSBox { let box = NSBox(); box.boxType = .separator; return box }
@@ -113,6 +128,74 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
 
     @objc func savePreference() { UserDefaults.standard.set(autoOpen.state == .on, forKey: "autoOpen") }
 
+    @objc func selectTemplate() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "3mf") ?? .data]
+        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.prompt = "Use Printer Profile"
+        panel.message = "Choose a project saved by Bambu Studio. Set its PLA filaments in HueForge bottom-to-top order."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.loadTemplate(url, importing: true)
+        }
+    }
+
+    func loadTemplate(_ url: URL, importing: Bool) {
+        guard let resources = Bundle.main.resourceURL,
+              let python = Bundle.main.object(forInfoDictionaryKey: "BridgePython") as? String else { return }
+        disconnect()
+        profileButton.isEnabled = false; choose.isEnabled = false
+        updateStatus("Checking printer profile…", "Reading the printer, nozzle and material settings from your 3MF.", busy: true)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            do {
+                let task = Process(); let pipe = Pipe()
+                task.executableURL = URL(fileURLWithPath: python)
+                task.arguments = [resources.appendingPathComponent("hueforge_bambu.py").path,
+                                  "--template", url.path, "--inspect-template"]
+                task.standardOutput = pipe; task.standardError = pipe
+                try task.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                task.waitUntilExit()
+                guard task.terminationStatus == 0,
+                      let info = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let printer = info["printer"] as? String,
+                      let nozzle = info["nozzle"] as? String,
+                      let bed = info["bed"] as? String,
+                      let count = info["filaments"] as? Int else {
+                    throw NSError(domain: "Bridge", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                        String(data: data, encoding: .utf8) ?? "Could not read this printer template."])
+                }
+                var saved = url
+                if importing {
+                    let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("HueForge Bambu Bridge")
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    saved = folder.appendingPathComponent("printer-template.3mf")
+                    try Data(contentsOf: url).write(to: saved, options: .atomic)
+                }
+                let template = saved
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.templateURL = template
+                    UserDefaults.standard.set(template.path, forKey: "printerTemplate")
+                    self.profileLabel.stringValue = "\(printer) · \(nozzle) mm · \(bed) · \(count) PLA filaments"
+                    self.profileLabel.toolTip = self.profileLabel.stringValue
+                    self.profileButton.title = "Change Printer Profile…"
+                    self.profileButton.isEnabled = true; self.choose.isEnabled = true
+                    self.updateStatus("Printer profile ready", "Choose your HueForge project, then save in HueForge to export.")
+                    if let project = self.projectURL { self.connect(project) }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.profileButton.isEnabled = true
+                    self.choose.isEnabled = self.templateURL != nil
+                    self.updateStatus("Could not load printer profile", error.localizedDescription, error: true)
+                }
+            }
+        }
+    }
+
     @objc func selectProject() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "hfp") ?? .data]
@@ -126,6 +209,8 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
     }
 
     func connect(_ url: URL) {
+        guard let template = templateURL else { return }
+        projectURL = url
         disconnect()
         latest = nil; open.isEnabled = false; reveal.isEnabled = false
         projectLabel.stringValue = url.lastPathComponent
@@ -143,7 +228,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: python)
-        task.arguments = [resources.appendingPathComponent("watch_hueforge.py").path, url.path]
+        task.arguments = [resources.appendingPathComponent("watch_hueforge.py").path, url.path, "--template", template.path]
         task.currentDirectoryURL = resources
         let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
         let token = UUID(); generation = token; worker = task

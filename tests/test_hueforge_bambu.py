@@ -4,6 +4,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+import zipfile
 import xml.etree.ElementTree as ET
 import hueforge_bambu as h
 
@@ -40,20 +41,6 @@ class ConverterTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 h.read_stack(p)
 
-    def test_profile_inheritance_and_gcode_include(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp)
-            for name, data in {'base': {'layer_height': '.2', 'speed': '50'},
-                               'code': {'name': 'code', 'machine_start_gcode': 'G28'},
-                               'child': {'name': 'child', 'inherits': 'base',
-                                         'include': ['code'], 'layer_height': '.08'}}.items():
-                (folder / (name+'.json')).write_text(json.dumps(data))
-            self.assertEqual(h.resolve_profile(folder, 'child'),
-                             {'name': 'child', 'layer_height': '.08',
-                              'speed': '50', 'machine_start_gcode': 'G28'})
-            (folder/'base.json').write_text('{"inherits":"child"}')
-            with self.assertRaises(ValueError): h.resolve_profile(folder, 'child')
-
     def test_stl_size_mismatch_and_truncation(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'test.stl'
@@ -84,11 +71,61 @@ class ConverterTests(unittest.TestCase):
         self.assertEqual(changes[1:5], ['filament_colour']*4)
         self.assertEqual(len(settings['flush_volumes_matrix']), 16)
 
+    def template_settings(self):
+        return dict(printer_model='Bambu Lab A1', printer_settings_id='Bambu Lab A1 0.4 nozzle',
+                    print_settings_id='My tuned profile', curr_bed_type='Smooth PEI Plate',
+                    nozzle_diameter=['0.4'], min_layer_height=['0.08'], max_layer_height=['0.28'],
+                    machine_start_gcode='CUSTOM START', machine_end_gcode='CUSTOM END',
+                    change_filament_gcode='CUSTOM CHANGE',
+                    filament_settings_id=['Bambu PLA Matte @BBL A1']*4, filament_type=['PLA']*4,
+                    filament_colour=[item['filamentDef']['Color'] for item in self.stack])
+
+    def test_template_preserves_machine_bed_calibration_and_modified_keys(self):
+        settings = self.template_settings()
+        settings.update(flush_volumes_matrix=['calibrated'], flush_multiplier=['.8'],
+                        different_settings_to_system=['top_surface_speed', '', '', '', '', 'machine_start_gcode'])
+        h.validate_template(settings, self.stack, .16, .08)
+        h.apply_project_settings(settings, self.stack, .16, .08)
+        self.assertEqual(settings['printer_model'], 'Bambu Lab A1')
+        self.assertEqual(settings['curr_bed_type'], 'Smooth PEI Plate')
+        self.assertEqual(settings['machine_start_gcode'], 'CUSTOM START')
+        self.assertEqual(settings['flush_volumes_matrix'], ['calibrated'])
+        self.assertEqual(settings['flush_multiplier'], ['.8'])
+        self.assertIn('top_surface_speed', settings['different_settings_to_system'][0])
+        self.assertEqual(settings['different_settings_to_system'][-1], 'machine_start_gcode')
+
+    def test_template_checks_nozzle_filament_count_and_family(self):
+        for mutation in ('nozzle', 'count', 'family'):
+            settings = self.template_settings()
+            if mutation == 'nozzle': settings['min_layer_height'] = ['.12']
+            if mutation == 'count': settings['filament_settings_id'].pop()
+            if mutation == 'family': settings['filament_settings_id'][0] = 'Generic PETG'
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                h.validate_template(settings, self.stack, .16, .08)
+
+    def test_read_template_rejects_wrong_archive_material_and_multi_extruder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'template.3mf'
+            path.write_text('not a zip')
+            with self.assertRaises(ValueError): h.read_template(path)
+            for mutation in ('valid', 'multi', 'material', 'missing', 'color'):
+                settings = self.template_settings()
+                if mutation == 'multi': settings['nozzle_diameter'] = ['.4', '.4']
+                if mutation == 'material': settings['filament_type'][0] = 'PETG'
+                if mutation == 'missing': del settings['machine_start_gcode']
+                if mutation == 'color': settings['filament_colour'][0] = 'bad'
+                with zipfile.ZipFile(path, 'w') as z:
+                    z.writestr('Metadata/project_settings.config', json.dumps(settings))
+                if mutation == 'valid': self.assertEqual(h.read_template(path), settings)
+                else:
+                    with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                        h.read_template(path)
+
     def test_never_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'existing.3mf'
             path.write_bytes(b'keep')
-            with self.assertRaises(ValueError): h.convert(Path('absent'), Path('absent'), path)
+            with self.assertRaises(ValueError): h.convert(Path('absent'), Path('absent'), path, Path('absent'))
             self.assertEqual(path.read_bytes(), b'keep')
 
 
