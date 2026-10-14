@@ -25,8 +25,16 @@ and material ranges despite the diagnostic.
 
 ## Limits
 
-- Native plugin: awaiting SDK; no loadable adapter or GUI integration verified.
-- The automated Studio UI inspection timed out; the CLI slicer was verified.
+- In-process native plugin: awaiting SDK; the separate AppKit companion needs no SDK.
+- The AppKit companion was built and exercised: project selection, a real HueForge
+  save, generated 3MF validation, disabling automatic opening and disconnect.
+  Studio window inspection still times out, so automatic opening was requested
+  through NSWorkspace but acceptance of the new document was not visually confirmed.
+- Nine unit tests cover conversion, both save orders, incomplete saves, debounce,
+  duplicate prevention and ambiguous STL names. A real watcher subprocess was
+  additionally tested with the installed Bambu CLI: HFP-only changes produced no
+  output; updating the STL then produced exactly one 3MF, with no duplicate export.
+  The CLI slicer was verified.
 - No physical print, adhesion, TD accuracy, purge tuning or optical color match
   has been verified.
 - HFP structure and Bambu preset/XML behavior are version-dependent.

@@ -1,6 +1,17 @@
 # Native HueForge plugin integration
 
-## Current boundary
+## Working without the SDK
+
+The macOS companion app watches a user-selected saved HFP and its matching Front
+STL. A completed HueForge save triggers conversion and opening in Studio through
+macOS NSWorkspace. The bridge uses only filesystem snapshots, the installed Bambu
+CLI and native AppKit controls. There is no injection, patched HueForge binary,
+reconstructed plugin vtable or unsupported in-process binding.
+
+This implements the practical export workflow now, without requiring developer
+access. A menu item inside HueForge remains a separate optional integration.
+
+## Optional native plugin boundary
 
 The conversion engine works on saved HFP + STL files. It is not yet a plugin
 loadable by HueForge. No official SDK headers or examples were found in the

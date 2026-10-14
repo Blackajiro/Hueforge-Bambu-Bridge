@@ -8,3 +8,4 @@ work/
 *.hfp
 *.hfpt
 result.json
+dist/

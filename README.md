@@ -3,8 +3,8 @@
 Open-source conversion of a saved HueForge project and its exported STL into a
 Bambu Studio project with automatic AMS filament changes.
 
-**Status: working macOS command-line prototype. Native HueForge plugin integration
-is pending access to the HueForge SDK.** This is an independent project, not an
+**Status: working macOS companion app and command-line converter, without a HueForge
+SDK dependency.** This is an independent project, not an
 official HueForge or Bambu Lab product.
 
 ## Supported today
@@ -19,7 +19,34 @@ The exporter uses Bambu Studio's own CLI to build the mesh/project and resolves
 its installed preset inheritance and G-code includes. No printer presets, vendor
 binaries, artwork, or personal filament libraries are bundled here.
 
-## Usage
+## macOS app — no SDK needed
+
+Build locally with the installed Swift compiler (Xcode/Command Line Tools) and Python 3.10+:
+
+```sh
+python3 macos/build.py
+```
+
+Open `dist/HueForge Bambu Bridge.app`, click **Scegli progetto HueForge…** and
+select the saved HFP. Wait for **Collegato**, then save in HueForge, confirming
+its save dialog. Keep the bridge open. Each completed save creates a new 3MF in `Bambu Bridge Exports/`
+beside the project and opens it in Bambu Studio. Automatic opening can be disabled.
+
+The bridge deliberately waits for the **next save after connecting**. Both HFP
+and the matching `_Front_*.stl` must change and remain stable for three seconds.
+It snapshots both files and checks for changes during conversion. Saving again
+during conversion discards the outdated result and processes the newer save.
+No existing 3MF is overwritten; each export is a separate revision. There must
+be exactly one matching Front STL in the selected project's folder. If you use
+Save As under a different name/folder, reconnect the new HFP.
+
+**Scollega** stops watching. Closing the app stops the bridge. No login item,
+background service, Accessibility permission or HueForge binary modification is
+required. The local build records the Python interpreter used to build it; this
+is not yet a standalone signed/notarized release for other Macs. Rebuild on the
+target Mac with Python installed.
+
+## Command-line usage
 
 Save the project in HueForge to regenerate its STL, then run from this directory:
 
@@ -58,10 +85,9 @@ results, and limits. Automated tests do not establish physical color fidelity.
 
 ## Native plugin
 
-The intended workflow is a HueForge menu action that exports the open project
-and opens the resulting 3MF in Bambu Studio. No native plugin binary or guessed
-SDK bindings are included. See the [integration plan](docs/native-plugin.md)
-and the [SDK request draft](docs/sdk-request.md).
+The companion app provides a save-to-export workflow without the SDK. It runs
+alongside HueForge rather than adding a menu inside it. A future native menu
+adapter is optional; see the [integration notes](docs/native-plugin.md).
 
 ## License
 
