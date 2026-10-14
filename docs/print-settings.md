@@ -1,6 +1,6 @@
 # HueForge settings for Bambu Studio
 
-Reviewed 2026-10-14 for ordinary, front-facing filament paintings on a **imported single-nozzle Bambu printer templates with AMS**, using Bambu Studio 02.08.02.61. This is an evidence-based
+Reviewed 2026-10-14 for ordinary, front-facing filament paintings on a **installed single-nozzle Bambu printer presets with AMS**, using Bambu Studio 02.08.02.61. This is an evidence-based
 baseline, not a universal “best quality” profile or a physical calibration.
 
 ## Applied to every export
@@ -19,14 +19,23 @@ baseline, not a universal “best quality” profile or a physical calibration.
 | Prime tower | On | Stabilizes extrusion after filament changes; not a replacement for purging. |
 | Purge multiplier | Imported, or 1 on color mismatch | Preserves calibrated matching-color templates. |
 | Purge matrix | Imported for matching colors/order; otherwise 650 mm³ off-diagonal | Fallback is conservative, **not color-calibrated**. |
-| Build plate | Imported from template | Select the correct plate before saving your Studio template. |
+| Build plate | User selection | Uses the corresponding plate temperatures from the material preset. |
 
-The bridge reads the full settings from a project 3MF saved in Bambu Studio.
-It preserves the selected printer/nozzle, plate, machine G-code, material profiles,
-temperatures, cooling, flow, speeds, line widths and shells. Configure exactly the
-same number of PLA filaments as HueForge uses, with Bambu Matte/Basic profiles in
-bottom-to-top order. Geometry and old color changes in the template are replaced;
-we do not merge its model with the HueForge artwork.
+The main workflow reads installed Bambu Studio printer, process and Bambu PLA
+Matte/Basic presets, resolving inheritance and included G-code. Printer, nozzle
+and build plate are selected in the app; filament families/colors come from the
+HueForge stack automatically. A compatible 0.08 mm High Quality process is preferred,
+falling back to the selected machine's default/compatible process. Project layer
+heights still override the process and must fit the chosen nozzle's limits.
+
+The preset chooses temperatures, cooling, flow, speeds, line widths and shells.
+No model from a reference project is needed. If the user's printer is absent,
+another available base preset can be chosen and changed in Studio before printing.
+The exporter does not claim that the substitute's G-code fits the physical machine.
+
+Advanced CLI use may still supply `--template` to preserve custom configuration.
+Only that route preserves a matching-color calibrated purge matrix. Direct preset
+selection uses the disclosed 650 mm³ fallback and multiplier 1.
 
 Project-specific overrides are also declared in `different_settings_to_system`.
 This matters: the Studio GUI can otherwise restore the system preset instead of
@@ -46,7 +55,7 @@ then validate dark-to-light transitions with your spools. Your imported matrix i
 If colors differ, the disclosed 650 mm³ fallback may waste material; use Studio
 to recalculate and tune before printing.
 
-Layer heights are checked against the imported nozzle limits (or conservative
+Layer heights are checked against the selected nozzle limits (or conservative
 nozzle-relative limits when absent), not a hardcoded P2S range. The tested bookmark
 uses 0.08/0.16 mm. A different nozzle can require retuning the project in HueForge.
 Never scale Z or enable adaptive layers after export without rechecking all swaps.
@@ -60,7 +69,7 @@ Never scale Z or enable adaptive layers after export without rechecking all swap
   not proof that these heights fit every project.
 - [Bambu Studio configuration definitions](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PrintConfig.cpp):
   prime tower pressure stabilization, purge multiplier, flush into model and
-  precise Z behavior. The imported template supplies the actual machine/material values.
+  precise Z behavior. Installed presets supply the actual machine/material values.
 - [Bambu Studio preset import](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PresetBundle.cpp):
   process/filament/printer modified-key metadata used when opening external projects.
 - [Bambu Studio 3MF reader/writer](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/Format/bbs_3mf.cpp):

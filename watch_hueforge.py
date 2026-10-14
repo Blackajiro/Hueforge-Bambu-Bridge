@@ -47,8 +47,9 @@ def emit(kind, message, path=None):
     print(json.dumps(dict(event=kind, message=message, path=str(path) if path else None)), flush=True)
 
 
-def watch(hfp, template):
-    read_template(template)
+def watch(hfp, template=None, printer=None, bed="Textured PEI Plate"):
+    if template:
+        read_template(template)
     hfp = hfp.resolve(strict=True)
     if hfp.suffix.lower() != '.hfp':
         raise ValueError('Choose a HueForge .hfp project.')
@@ -75,7 +76,7 @@ def watch(hfp, template):
                     import contextlib
                     import sys
                     with contextlib.redirect_stdout(sys.stderr):
-                        convert(source, mesh, output, template)
+                        convert(source, mesh, output, template, printer, bed)
                     if pair != (signature(hfp), signature(find_stl(hfp))):
                         continue
                     destination = hfp.parent/'Bambu Bridge Exports'
@@ -104,13 +105,16 @@ def watch(hfp, template):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('hfp', type=Path)
-    parser.add_argument('--template', type=Path, required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--template', type=Path)
+    target.add_argument('--printer')
+    parser.add_argument('--bed', default='Textured PEI Plate')
     args = parser.parse_args()
     def stop(signum, frame):
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, stop)
     try:
-        watch(args.hfp, args.template)
+        watch(args.hfp, args.template, args.printer, args.bed)
     except Exception as error:
         emit('error', str(error))
         raise SystemExit(1)

@@ -87,3 +87,18 @@ in the README and print-settings guide.
 
 The template was also imported in the running macOS UI and restored after a quit/relaunch.
 A real watcher subprocess exported a saved file pair with the selected A1 template.
+
+## Version 0.5 direct printer selection
+
+The standard UI now lists installed printer models, available nozzle diameters
+and supported plate types. It resolves compatible process and Matte/Basic PLA
+presets automatically. A 3MF template is no longer required; custom-template CLI
+support remains optional. The installed version exposed 40 single-nozzle presets.
+
+Thirteen unit tests pass, including a generated preset tree with inheritance,
+plate exclusions and automatic filament-family matching. Direct A1 / Smooth PEI
+and P2S / Textured PEI selections were converted and sliced with the expected
+18 layers and three AMS changes. No physical print was performed.
+
+The three native selection menus were exercised; selections survived app restart.
+A real watcher subprocess exported with direct P2S/nozzle/plate arguments and no template.

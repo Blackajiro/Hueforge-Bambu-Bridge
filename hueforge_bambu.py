@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Convert a HueForge color stack using a Bambu Studio printer template."""
 import argparse
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
@@ -44,6 +45,90 @@ def apply_project_settings(settings, stack, first, height):
         *[';'.join(sorted(set(changes[i+1].split(';')) - {''} | {'filament_colour'}))
           for i in range(count)], changes[-1],
     ]
+
+
+PROFILES = APP / 'Resources/profiles/BBL'
+BEDS = {'Textured PEI Plate': 'Textured PEI Plate',
+        'High Temp Plate': 'Smooth PEI / High Temp Plate',
+        'Cool Plate': 'Cool Plate', 'Engineering Plate': 'Engineering Plate',
+        'Supertack Plate': 'Cool Plate SuperTack'}
+
+
+@lru_cache(maxsize=None)
+def resolve_profile(folder, name, trail=()):
+    if name in trail or Path(name).name != name:
+        raise ValueError('Invalid preset inheritance')
+    source = json.loads((folder / (name + '.json')).read_text())
+    result = {}
+    if source.get('inherits'):
+        result.update(resolve_profile(folder, source['inherits'], trail + (name,)))
+    result.update(source)
+    for include in source.get('include', []):
+        part = resolve_profile(folder, include, trail + (name,))
+        result.update({k: v for k, v in part.items() if k not in
+                       {'name', 'type', 'from', 'setting_id', 'instantiation'}})
+    result.pop('inherits', None); result.pop('include', None)
+    return result
+
+
+@lru_cache(maxsize=None)
+def leaf_profiles(kind):
+    entries = []
+    for path in sorted((PROFILES / kind).glob('*.json')):
+        source = json.loads(path.read_text())
+        if kind == 'filament' and not source.get('name', '').startswith(('Bambu PLA Matte @', 'Bambu PLA Basic @')):
+            continue
+        if source.get('type') == kind and source.get('instantiation') == 'true':
+            entries.append(resolve_profile(PROFILES / kind, path.stem))
+    return entries
+
+
+def printer_catalog():
+    result = []
+    for machine in leaf_profiles('machine'):
+        if len(machine.get('nozzle_diameter', [])) != 1 or len(machine.get('extruder_offset', ['0x0'])) != 1:
+            continue
+        model = machine.get('printer_model')
+        if not model:
+            continue
+        model_path = PROFILES / 'machine' / (model + '.json')
+        info = json.loads(model_path.read_text()) if model_path.exists() else {}
+        excluded = info.get('not_support_bed_type', '').split(';')
+        beds = [{'id': key, 'name': name} for key, name in BEDS.items() if key not in excluded]
+        result.append(dict(id=machine['name'], model=model,
+                           nozzle=machine['nozzle_diameter'][0], beds=beds,
+                           default_bed=info.get('default_bed_type', 'Textured PEI Plate')))
+    return sorted(result, key=lambda p: (p['model'], float(p['nozzle']), p['id']))
+
+
+def preset_configs(printer, bed, stack, first, height):
+    catalog = {p['id']: p for p in printer_catalog()}
+    if printer not in catalog:
+        raise ValueError('Choose a printer preset installed in Bambu Studio')
+    if bed not in [b['id'] for b in catalog[printer]['beds']]:
+        raise ValueError('Choose a supported build plate for this preset')
+    machine = dict(resolve_profile(PROFILES / 'machine', printer))
+    compatible = [p for p in leaf_profiles('process') if printer in p.get('compatible_printers', [])]
+    if not compatible:
+        raise ValueError('No compatible process preset found; choose another printer as a base')
+    compatible.sort(key=lambda p: (not p['name'].startswith('0.08mm High Quality'),
+                                    p['name'] != machine.get('default_print_profile'), p['name']))
+    process = dict(compatible[0])
+    process.update(PROCESS_OVERRIDES)
+    process.update(layer_height=str(height), initial_layer_print_height=str(first), curr_bed_type=bed)
+    validate_layer_heights(machine, first, height)
+    filaments = []
+    for item in stack:
+        family = 'Matte' if item['filamentDef']['Brand'].endswith('Matte') else 'Basic'
+        choices = [p for p in leaf_profiles('filament')
+                   if p['name'].startswith(f'Bambu PLA {family} @') and
+                   printer in p.get('compatible_printers', [])]
+        if not choices:
+            raise ValueError(f'No Bambu PLA {family} preset for this printer; choose another base preset')
+        preset = dict(sorted(choices, key=lambda p: (len(p['name']), p['name']))[0])
+        preset['filament_colour'] = [item['filamentDef']['Color']]
+        filaments.append(preset)
+    return machine, process, filaments
 
 
 def read_template(path):
@@ -90,6 +175,10 @@ def validate_template(settings, stack, first, height):
         family = 'Matte' if item['filamentDef']['Brand'].endswith('Matte') else 'Basic'
         if not preset.startswith(f'Bambu PLA {family}'):
             raise ValueError(f'Template filament must use Bambu PLA {family}: {preset}')
+    validate_layer_heights(settings, first, height)
+
+
+def validate_layer_heights(settings, first, height):
     nozzle = float(settings['nozzle_diameter'][0])
     low = float(settings.get('min_layer_height', [0.25 * nozzle])[0])
     high = float(settings.get('max_layer_height', [0.75 * nozzle])[0])
@@ -164,7 +253,7 @@ def validate_stl(stl, project, stack, first, height):
         raise ValueError('Last filament change lies above the STL')
 
 
-def convert(hfp, stl, output, template):
+def convert(hfp, stl, output, template=None, printer=None, bed="Textured PEI Plate"):
     if output.exists():
         raise ValueError(f'Refusing to overwrite: {output}')
     project = json.loads(hfp.read_text())
@@ -172,27 +261,49 @@ def convert(hfp, stl, output, template):
     if stl.suffix.lower() != '.stl' or not stl.is_file():
         raise ValueError('Provide the STL exported alongside the HFP')
     validate_stl(stl, project, stack, first, height)
-    settings = read_template(template)
-    validate_template(settings, stack, first, height)
-    apply_project_settings(settings, stack, first, height)
-    with tempfile.TemporaryDirectory(prefix='hueforge-bambu-') as tmp:
-        tmp = Path(tmp)
+    settings = None
+    if template:
+        settings = read_template(template)
+        validate_template(settings, stack, first, height)
+        apply_project_settings(settings, stack, first, height)
+        configs = []
         for kind, name in [('machine', settings['printer_settings_id']),
                            ('process', settings['print_settings_id'])]:
             config = dict(settings, type=kind, name=name, **{'from': 'system'})
             config['compatible_printers'] = [settings['printer_settings_id']]
+            configs.append(config)
+        filaments = []
+        expected_model = settings['printer_model']
+    else:
+        machine, process, filaments = preset_configs(printer, bed, stack, first, height)
+        configs = [machine, process]
+        expected_model = machine['printer_model']
+    with tempfile.TemporaryDirectory(prefix='hueforge-bambu-') as tmp:
+        tmp = Path(tmp)
+        for kind, config in zip(['machine', 'process'], configs):
             (tmp / (kind + '.json')).write_text(json.dumps(config))
+        filament_files = []
+        for index, config in enumerate(filaments):
+            file = tmp / f'filament{index}.json'
+            file.write_text(json.dumps(config)); filament_files.append(str(file))
         base = tmp / 'base.3mf'
         command = [str(APP / 'MacOS/BambuStudio'), '--load-settings',
                    f'{tmp}/machine.json;{tmp}/process.json', '--arrange', '1', '--orient', '0',
                    '--export-3mf', str(base), str(stl.resolve())]
+        if filament_files:
+            command[1:1] = ['--load-filaments', ';'.join(filament_files)]
         result = subprocess.run(command, capture_output=True, text=True, cwd=tmp)
         if result.returncode or not base.exists():
             raise RuntimeError('Bambu export failed:\n' + result.stdout[-4000:] + result.stderr[-4000:])
         with zipfile.ZipFile(base) as original:
             generated = json.loads(original.read('Metadata/project_settings.config'))
-            if generated['printer_model'] != settings['printer_model']:
-                raise RuntimeError('Bambu did not apply the selected printer template')
+            if generated['printer_model'] != expected_model:
+                raise RuntimeError('Bambu did not apply the selected printer')
+            if settings is None:
+                settings = generated
+                # Fresh presets have no calibrated color-pair purge matrix.
+                settings['filament_colour'] = []
+                apply_project_settings(settings, stack, first, height)
             with zipfile.ZipFile(tmp / 'final.3mf', 'w', zipfile.ZIP_DEFLATED) as target:
                 for entry in original.infolist():
                     if entry.filename == 'Metadata/project_settings.config':
@@ -217,11 +328,19 @@ if __name__ == '__main__':
     parser.add_argument('hfp', type=Path, nargs='?')
     parser.add_argument('stl', type=Path, nargs='?')
     parser.add_argument('output', type=Path, nargs='?')
-    parser.add_argument('--template', type=Path, required=True, help='A project 3MF saved by Bambu Studio')
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument('--template', type=Path, help='Optional custom Bambu Studio 3MF')
+    target.add_argument('--printer', help='Installed Bambu Studio printer preset name')
+    parser.add_argument('--bed', default='Textured PEI Plate')
+    parser.add_argument('--list-printers', action='store_true')
     parser.add_argument('--inspect-template', action='store_true')
     args = parser.parse_args()
     try:
-        if args.inspect_template:
+        if args.list_printers:
+            print(json.dumps(printer_catalog()))
+        elif args.inspect_template:
+            if not args.template:
+                parser.error('--inspect-template requires --template')
             settings = read_template(args.template)
             print(json.dumps({'printer': settings['printer_settings_id'],
                               'nozzle': settings['nozzle_diameter'][0],
@@ -230,6 +349,6 @@ if __name__ == '__main__':
         else:
             if not all([args.hfp, args.stl, args.output]):
                 parser.error('Provide HFP, STL and output paths')
-            convert(args.hfp, args.stl, args.output, args.template)
+            convert(args.hfp, args.stl, args.output, args.template, args.printer, args.bed)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as error:
         parser.exit(1, f'{error}\n')

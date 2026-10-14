@@ -5,6 +5,7 @@ import struct
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import hueforge_bambu as h
 
@@ -120,6 +121,39 @@ class ConverterTests(unittest.TestCase):
                 else:
                     with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                         h.read_template(path)
+
+    def test_installed_printer_catalog_and_automatic_material_presets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for kind in ['machine', 'process', 'filament']: (root/kind).mkdir()
+            fixtures = {
+                'machine/Test Printer.json': dict(type='machine_model', default_bed_type='Textured PEI Plate', not_support_bed_type='Cool Plate'),
+                'machine/base.json': dict(type='machine', name='base', extruder_offset=['0x0'], machine_start_gcode='official GCODE', min_layer_height=['.08'], max_layer_height=['.28']),
+                'machine/Test Printer 0.4.json': dict(type='machine', name='Test Printer 0.4', inherits='base', instantiation='true', printer_model='Test Printer', nozzle_diameter=['.4']),
+                'machine/Dual.json': dict(type='machine', name='Dual', instantiation='true', printer_model='Dual', nozzle_diameter=['.4','.4']),
+                'process/Quality.json': dict(type='process', name='Quality', instantiation='true', compatible_printers=['Test Printer 0.4']),
+                'filament/Matte.json': dict(type='filament', name='Bambu PLA Matte @Test', instantiation='true', compatible_printers=['Test Printer 0.4']),
+                'filament/Basic.json': dict(type='filament', name='Bambu PLA Basic @Test', instantiation='true', compatible_printers=['Test Printer 0.4']),
+            }
+            for name, value in fixtures.items(): (root/name).write_text(json.dumps(value))
+            h.leaf_profiles.cache_clear(); h.resolve_profile.cache_clear()
+            try:
+                with patch.object(h, 'PROFILES', root):
+                    catalog = h.printer_catalog()
+                    self.assertEqual(len(catalog), 1)
+                    self.assertNotIn('Cool Plate', [b['id'] for b in catalog[0]['beds']])
+                    self.stack[1]['filamentDef']['Brand'] = 'BambuLab Basic'
+                    machine, process, filaments = h.preset_configs('Test Printer 0.4', 'High Temp Plate', self.stack, .16, .08)
+                    self.assertEqual(machine['machine_start_gcode'], 'official GCODE')
+                    self.assertEqual(process['curr_bed_type'], 'High Temp Plate')
+                    self.assertEqual(filaments[1]['name'], 'Bambu PLA Basic @Test')
+                    self.assertEqual(filaments[0]['filament_colour'], ['#000000'])
+                    with self.assertRaises(ValueError):
+                        h.preset_configs('missing', 'High Temp Plate', self.stack, .16, .08)
+                    with self.assertRaises(ValueError):
+                        h.preset_configs('Test Printer 0.4', 'Cool Plate', self.stack, .16, .08)
+            finally:
+                h.leaf_profiles.cache_clear(); h.resolve_profile.cache_clear()
 
     def test_never_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:

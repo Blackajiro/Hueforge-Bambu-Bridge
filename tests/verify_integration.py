@@ -13,12 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import hueforge_bambu as bridge
 
 
-def verify(hfp, stl, template):
+def verify(hfp, stl, template=None, printer=None, bed="Textured PEI Plate"):
     stack, first, height = bridge.read_stack(json.loads(hfp.read_text()))
     with tempfile.TemporaryDirectory(prefix='hueforge-integration-') as folder:
         folder = Path(folder)
         project, sliced = folder/'project.3mf', folder/'sliced.3mf'
-        bridge.convert(hfp, stl, project, template)
+        bridge.convert(hfp, stl, project, template, printer, bed)
         result = subprocess.run([str(bridge.APP/'MacOS/BambuStudio'), '--slice', '0',
                                  '--export-3mf', str(sliced), str(project)],
                                 capture_output=True, text=True, cwd=folder)
@@ -29,10 +29,15 @@ def verify(hfp, stl, template):
             for key, value in bridge.PROCESS_OVERRIDES.items():
                 assert settings[key] == value, (key, settings[key], value)
             assert abs(float(settings['initial_layer_print_height'])-first) < 1e-5
-            template_settings = bridge.read_template(template)
-            for key in ['printer_settings_id', 'nozzle_diameter', 'curr_bed_type',
-                        'machine_start_gcode', 'machine_end_gcode', 'change_filament_gcode']:
-                assert settings[key] == template_settings[key], key
+            if template:
+                template_settings = bridge.read_template(template)
+                for key in ['printer_settings_id', 'nozzle_diameter', 'curr_bed_type',
+                            'machine_start_gcode', 'machine_end_gcode', 'change_filament_gcode']:
+                    assert settings[key] == template_settings[key], key
+            else:
+                assert settings['printer_settings_id'] == printer
+                assert settings['curr_bed_type'] == bed
+                assert len(settings['machine_start_gcode']) > 100
             gcode = archive.read('Metadata/plate_1.gcode').decode('utf-8')
             info = ET.fromstring(archive.read('Metadata/slice_info.config'))
             used = info.findall('plate/filament')
@@ -61,6 +66,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('hfp', type=Path)
     parser.add_argument('stl', type=Path)
-    parser.add_argument('--template', type=Path, required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--template', type=Path)
+    target.add_argument('--printer')
+    parser.add_argument('--bed', default='Textured PEI Plate')
     args = parser.parse_args()
-    verify(args.hfp, args.stl, args.template)
+    verify(args.hfp, args.stl, args.template, args.printer, args.bed)

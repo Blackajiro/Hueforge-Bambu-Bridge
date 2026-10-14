@@ -1,6 +1,15 @@
 import AppKit
 import UniformTypeIdentifiers
 
+struct PrinterPreset: Decodable {
+    struct Bed: Decodable { let id: String; let name: String }
+    let id: String
+    let model: String
+    let nozzle: String
+    let beds: [Bed]
+    let default_bed: String
+}
+
 final class BridgeApp: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     let projectLabel = NSTextField(labelWithString: "No project selected")
@@ -13,9 +22,16 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
     let reveal = NSButton(title: "Show in Finder", target: nil, action: nil)
     let autoOpen = NSButton(checkboxWithTitle: "Open Bambu Studio after export", target: nil, action: nil)
     let progress = NSProgressIndicator()
-    let profileLabel = NSTextField(wrappingLabelWithString: "No printer profile selected")
-    let profileButton = NSButton(title: "Choose Printer Profile…", target: nil, action: nil)
-    var templateURL: URL?
+    let printerChoice = NSPopUpButton()
+    let nozzleChoice = NSPopUpButton()
+    let bedChoice = NSPopUpButton()
+    var printers: [PrinterPreset] = []
+    var selectedPreset: PrinterPreset? {
+        printers.first { $0.model == printerChoice.titleOfSelectedItem && $0.nozzle + " mm" == nozzleChoice.titleOfSelectedItem }
+    }
+    var selectedBed: String? {
+        selectedPreset?.beds.first { $0.name == bedChoice.titleOfSelectedItem }?.id
+    }
     var projectURL: URL?
     var worker: Process?
     var latest: URL?
@@ -38,14 +54,14 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         edit.submenu = NSMenu(title: "Edit")
         edit.submenu?.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         NSApp.mainMenu = menu
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 540),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 570),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.minSize = NSSize(width: 560, height: 560)
+        window.minSize = NSSize(width: 560, height: 590)
         window.title = "HueForge Bambu Bridge"
         window.center()
         let heading = NSTextField(wrappingLabelWithString: "Save in HueForge. Slice in Bambu.")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
-        let detail = NSTextField(labelWithString: "Your printer profile. Your HueForge colors.")
+        let detail = NSTextField(labelWithString: "Choose a printer. Keep your HueForge colors.")
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
         let icon = NSImageView(image: NSImage(named: NSImage.applicationIconName) ?? NSImage())
@@ -68,10 +84,20 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         progress.style = .spinning; progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
         let phaseRow = NSStackView(views: [phase, progress]); phaseRow.spacing = 8
-        profileLabel.textColor = .secondaryLabelColor
-        profileLabel.maximumNumberOfLines = 3
-        profileButton.target = self; profileButton.action = #selector(selectTemplate)
-        profileButton.bezelStyle = .rounded
+        printerChoice.target = self; printerChoice.action = #selector(printerChanged)
+        nozzleChoice.target = self; nozzleChoice.action = #selector(nozzleChanged)
+        bedChoice.target = self; bedChoice.action = #selector(selectionChanged)
+        for popup in [printerChoice, nozzleChoice, bedChoice] { popup.isEnabled = false }
+        printerChoice.addItem(withTitle: "Loading installed printers…")
+        let printerGrid = NSGridView(views: [
+            [NSTextField(labelWithString: "Printer"), printerChoice],
+            [NSTextField(labelWithString: "Nozzle"), nozzleChoice],
+            [NSTextField(labelWithString: "Build plate"), bedChoice]
+        ])
+        printerGrid.rowSpacing = 8; printerGrid.columnSpacing = 16
+        printerGrid.column(at: 0).width = 90
+        printerGrid.column(at: 0).xPlacement = .leading
+        printerGrid.column(at: 1).xPlacement = .fill
         choose.isEnabled = false
         choose.target = self; choose.action = #selector(selectProject)
         stop.target = self; stop.action = #selector(disconnect); stop.isHidden = true
@@ -85,13 +111,14 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         let output = NSStackView(views: [open, reveal]); output.spacing = 8
         let hint = NSTextField(wrappingLabelWithString: "Before printing, check the build plate and map project colors to your AMS spools in Bambu Studio.")
         hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [header, separator(), profileButton, profileLabel, separator(), projectLabel, location, selection,
+        let stack = NSStackView(views: [header, separator(), printerGrid, separator(), projectLabel, location, selection,
                                        separator(), phaseRow, status, autoOpen, output, hint])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
         var constraints = [
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            printerGrid.widthAnchor.constraint(equalTo: stack.widthAnchor),
             heading.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -60),
             detail.widthAnchor.constraint(equalTo: heading.widthAnchor),
             stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 24),
@@ -99,7 +126,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 24),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor, constant: -24)
         ]
-        for view in [profileLabel, projectLabel, location, status, hint] {
+        for view in [projectLabel, location, status, hint] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor))
         }
         for view in stack.arrangedSubviews where view is NSBox {
@@ -108,12 +135,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         NSLayoutConstraint.activate(constraints)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let saved = UserDefaults.standard.string(forKey: "printerTemplate"),
-           FileManager.default.fileExists(atPath: saved) {
-            loadTemplate(URL(fileURLWithPath: saved), importing: false)
-        } else {
-            updateStatus("Choose a printer profile first", "Save a project 3MF in Bambu Studio with your printer, nozzle, build plate and PLA filaments, then import it here.")
-        }
+        loadPrinters()
     }
 
     func separator() -> NSBox { let box = NSBox(); box.boxType = .separator; return box }
@@ -128,72 +150,82 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
 
     @objc func savePreference() { UserDefaults.standard.set(autoOpen.state == .on, forKey: "autoOpen") }
 
-    @objc func selectTemplate() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "3mf") ?? .data]
-        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
-        panel.prompt = "Use Printer Profile"
-        panel.message = "Choose a project saved by Bambu Studio. Set its PLA filaments in HueForge bottom-to-top order."
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.loadTemplate(url, importing: true)
+    func loadPrinters() {
+        guard let resources = Bundle.main.resourceURL,
+              let python = Bundle.main.object(forInfoDictionaryKey: "BridgePython") as? String else { return }
+        updateStatus("Loading printers…", "Reading the presets installed with Bambu Studio.", busy: true)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            do {
+                let task = Process(); let output = Pipe(); let errors = Pipe()
+                task.executableURL = URL(fileURLWithPath: python)
+                task.arguments = [resources.appendingPathComponent("hueforge_bambu.py").path, "--list-printers"]
+                task.standardOutput = output; task.standardError = errors
+                try task.run()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                task.waitUntilExit()
+                guard task.terminationStatus == 0 else {
+                    throw NSError(domain: "Bridge", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                        String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Cannot read Bambu Studio presets."])
+                }
+                let entries = try JSONDecoder().decode([PrinterPreset].self, from: data)
+                guard !entries.isEmpty else {
+                    throw NSError(domain: "Bridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "Install Bambu Studio in /Applications to load its printer presets."])
+                }
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.printers = entries
+                    self.printerChoice.removeAllItems()
+                    self.printerChoice.addItem(withTitle: "Select a printer…")
+                    self.printerChoice.addItems(withTitles: Array(Set(entries.map { $0.model })).sorted())
+                    self.printerChoice.isEnabled = true
+                    if let saved = UserDefaults.standard.string(forKey: "printerModel"),
+                       self.printerChoice.itemTitles.contains(saved) {
+                        self.printerChoice.selectItem(withTitle: saved)
+                        self.printerChanged()
+                    } else {
+                        self.updateStatus("Choose your printer", "If your model is missing, choose another as a starting point and change it in Bambu Studio before printing.")
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { self?.updateStatus("Could not load printers", error.localizedDescription, error: true) }
+            }
         }
     }
 
-    func loadTemplate(_ url: URL, importing: Bool) {
-        guard let resources = Bundle.main.resourceURL,
-              let python = Bundle.main.object(forInfoDictionaryKey: "BridgePython") as? String else { return }
+    @objc func printerChanged() {
         disconnect()
-        profileButton.isEnabled = false; choose.isEnabled = false
-        updateStatus("Checking printer profile…", "Reading the printer, nozzle and material settings from your 3MF.", busy: true)
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            do {
-                let task = Process(); let pipe = Pipe()
-                task.executableURL = URL(fileURLWithPath: python)
-                task.arguments = [resources.appendingPathComponent("hueforge_bambu.py").path,
-                                  "--template", url.path, "--inspect-template"]
-                task.standardOutput = pipe; task.standardError = pipe
-                try task.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                task.waitUntilExit()
-                guard task.terminationStatus == 0,
-                      let info = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let printer = info["printer"] as? String,
-                      let nozzle = info["nozzle"] as? String,
-                      let bed = info["bed"] as? String,
-                      let count = info["filaments"] as? Int else {
-                    throw NSError(domain: "Bridge", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                        String(data: data, encoding: .utf8) ?? "Could not read this printer template."])
-                }
-                var saved = url
-                if importing {
-                    let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                        .appendingPathComponent("HueForge Bambu Bridge")
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                    saved = folder.appendingPathComponent("printer-template.3mf")
-                    try Data(contentsOf: url).write(to: saved, options: .atomic)
-                }
-                let template = saved
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    self.templateURL = template
-                    UserDefaults.standard.set(template.path, forKey: "printerTemplate")
-                    self.profileLabel.stringValue = "\(printer) · \(nozzle) mm · \(bed) · \(count) PLA filaments"
-                    self.profileLabel.toolTip = self.profileLabel.stringValue
-                    self.profileButton.title = "Change Printer Profile…"
-                    self.profileButton.isEnabled = true; self.choose.isEnabled = true
-                    self.updateStatus("Printer profile ready", "Choose your HueForge project, then save in HueForge to export.")
-                    if let project = self.projectURL { self.connect(project) }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    self.profileButton.isEnabled = true
-                    self.choose.isEnabled = self.templateURL != nil
-                    self.updateStatus("Could not load printer profile", error.localizedDescription, error: true)
-                }
+        let matches = printers.filter { $0.model == printerChoice.titleOfSelectedItem }
+        nozzleChoice.removeAllItems()
+        let nozzles = Array(Set(matches.map { $0.nozzle })).sorted { (Double($0) ?? 0) < (Double($1) ?? 0) }
+        nozzleChoice.addItems(withTitles: nozzles.map { $0 + " mm" })
+        nozzleChoice.isEnabled = !nozzles.isEmpty
+        let saved = UserDefaults.standard.string(forKey: "nozzle") ?? "0.4"
+        if nozzles.contains(saved) { nozzleChoice.selectItem(withTitle: saved + " mm") }
+        nozzleChanged()
+    }
+
+    @objc func nozzleChanged() {
+        bedChoice.removeAllItems()
+        if let preset = selectedPreset {
+            bedChoice.addItems(withTitles: preset.beds.map { $0.name })
+            let preferred = UserDefaults.standard.string(forKey: "bed") ?? preset.default_bed
+            if let bed = preset.beds.first(where: { $0.id == preferred }) {
+                bedChoice.selectItem(withTitle: bed.name)
             }
         }
+        bedChoice.isEnabled = selectedPreset != nil
+        selectionChanged()
+    }
+
+    @objc func selectionChanged() {
+        disconnect()
+        guard let preset = selectedPreset, let bed = selectedBed else { choose.isEnabled = false; return }
+        UserDefaults.standard.set(preset.model, forKey: "printerModel")
+        UserDefaults.standard.set(preset.nozzle, forKey: "nozzle")
+        UserDefaults.standard.set(bed, forKey: "bed")
+        choose.isEnabled = true
+        updateStatus("Printer selected", "Choose a HueForge project. You can change the printer and settings later in Bambu Studio.")
+        if let project = projectURL { connect(project) }
     }
 
     @objc func selectProject() {
@@ -209,7 +241,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
     }
 
     func connect(_ url: URL) {
-        guard let template = templateURL else { return }
+        guard let preset = selectedPreset, let bed = selectedBed else { return }
         projectURL = url
         disconnect()
         latest = nil; open.isEnabled = false; reveal.isEnabled = false
@@ -228,7 +260,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate {
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: python)
-        task.arguments = [resources.appendingPathComponent("watch_hueforge.py").path, url.path, "--template", template.path]
+        task.arguments = [resources.appendingPathComponent("watch_hueforge.py").path, url.path, "--printer", preset.id, "--bed", bed]
         task.currentDirectoryURL = resources
         let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
         let token = UUID(); generation = token; worker = task
