@@ -14,6 +14,7 @@ app = root/'dist/HueForge Bambu Bridge.app/Contents'
 (app/'Resources').mkdir(exist_ok=True)
 subprocess.run(['swiftc', '-target', platform.machine() + '-apple-macosx12.0', '-O', str(root/'macos/main.swift'), '-o', str(app/'MacOS/Bridge'),
                 '-framework', 'AppKit'], check=True)
+shutil.copyfile(root/'macos/AppIcon.icns', app/'Resources/AppIcon.icns')
 for name in ['hueforge_bambu.py', 'watch_hueforge.py']:
     shutil.copyfile(root/name, app/'Resources'/name)
 with (app/'Info.plist').open('wb') as output:
@@ -21,6 +22,7 @@ with (app/'Info.plist').open('wb') as output:
                       CFBundleDisplayName='HueForge Bambu Bridge',
                       CFBundleIdentifier='org.hueforge-bambu-bridge.desktop',
                       CFBundleExecutable='Bridge', CFBundlePackageType='APPL',
+                      CFBundleIconFile='AppIcon',
                       CFBundleShortVersionString='0.2.0', CFBundleVersion='2',
                       LSMinimumSystemVersion='12.0', NSHighResolutionCapable=True,
                       BridgePython=sys.executable), output)
