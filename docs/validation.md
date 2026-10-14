@@ -1,0 +1,47 @@
+# Validation and known limits
+
+Verified locally on 2026-10-14 with HueForge **0.9.4.4** and Bambu Studio
+**02.08.02.61**, using an exported 50 × 150 × 1.52 mm winter bookmark.
+
+| Setting | Observed result |
+|---|---|
+| Printer/nozzle | P2S / 0.4 mm |
+| First / regular layer | 0.16 / 0.08 mm |
+| Infill | 100%, rectilinear (`zig-zag` in Bambu config) |
+| Model layers | 18 |
+| Material ranges | 1–3, 4–7, 8–11, 12–18 |
+| Tool changes | T1 at Z 0.40, T2 at Z 0.72, T3 at Z 1.04 mm |
+| Materials | Matte Charcoal → Basic Dark Gray → Matte Mandarin Orange → Matte Ivory White |
+| Estimated time / total material | 4008 seconds / 11.13 g |
+
+The motor's sliced `layer_filament_lists` and actual G-code tool changes were
+checked, in addition to the unsliced project metadata. The test artifact is not
+bundled: use your own saved project with the opt-in integration test.
+
+The installed G-code parser logs `Invalid T command (T65535)` at the end. This
+command is present in Bambu's official P2S end G-code for unloading to AMS; the
+converter does not introduce or rewrite it. Slicing produced all expected layers
+and material ranges despite the diagnostic.
+
+## Limits
+
+- Native plugin: awaiting SDK; no loadable adapter or GUI integration verified.
+- The automated Studio UI inspection timed out; the CLI slicer was verified.
+- No physical print, adhesion, TD accuracy, purge tuning or optical color match
+  has been verified.
+- HFP structure and Bambu preset/XML behavior are version-dependent.
+- The STL dimensions check cannot distinguish different meshes with the same
+  bounds. Always use the STL regenerated alongside the project being converted.
+- Binary STL parsing here checks dimensions and finite vertices, not manifoldness,
+  self-intersections or printability.
+- Profile names, printer, build plate and PLA families are intentionally restricted
+  for the first prototype; other machines and platforms have not been tested.
+
+## References
+
+- [Official Bambu 3MF reader/writer](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/Format/bbs_3mf.cpp)
+- [Official tool change types](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/CustomGCode.hpp)
+- [Official CLI implementation](https://github.com/bambulab/BambuStudio/blob/master/src/BambuStudio.cpp)
+
+Vendor source was consulted to understand file formats. The repository uses
+its own implementation and does not bundle vendor source or application assets.
